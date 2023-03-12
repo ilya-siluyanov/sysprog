@@ -133,10 +133,9 @@ malloc(size_t size)
 void *
 calloc(size_t num, size_t size)
 {
-	heaph_touch();
 	void *res = default_calloc(num, size);
 	if (res != NULL)
-		alloc_count_inc();
+		++alloc_count;
 	return res;
 }
 
