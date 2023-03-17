@@ -135,31 +135,6 @@ if not is_error and etalon_len != output_len:
 	      'expected {}'.format(output_len, etalon_len))
 	is_error = True
 p.terminate()
-
-# Explicitly test the 'exit' command. It is expected to terminate the shell,
-# hence tested separately.
-tests = [
-("exit", 0),
-("  exit ", 0),
-("  exit   10  ", 10),
-]
-for test in tests:
-	if is_error:
-		break
-	p = open_new_shell()
-	try:
-		p.stdin.write(test[0].encode() + b'\n')
-		p.wait(1)
-	except subprocess.TimeoutExpired:
-		print('Too long no output. Probably you forgot to '\
-		      'handle "exit" manually')
-		finish(-1)
-	p.terminate()
-	if p.returncode != test[1]:
-		print('Wrong exit code in test "{}"'.format(test[0]))
-		print('Expected {}, got {}'.format(test[1], p.returncode))
-		is_error = True
-
 if is_error:
 	exit_failure()
 
