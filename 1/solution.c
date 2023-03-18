@@ -1,14 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include "libcoro.h"
 #include "models.h"
 #include "stack.h"
-
-typedef long long ll;
-typedef long double ld;
-typedef unsigned long long ull;
+#include "timings.h"
+#include "types.h"
 
 
 file_to_sort *find_file(file_to_sort **storage, ll size) {
@@ -20,12 +17,6 @@ file_to_sort *find_file(file_to_sort **storage, ll size) {
     return NULL;
 }
 
-ld get_microsec() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-
-    return ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-}
 
 ll numbers_count(char *filename) {
     FILE *f = fopen(filename, "r");
@@ -48,7 +39,7 @@ ll numbers_count(char *filename) {
 numbers_array *read_array(char *filename) {
     ll count = numbers_count(filename);
     numbers_array *arr = (numbers_array *) malloc(sizeof(numbers_array));
-    arr->numbers = (ll *) malloc(sizeof(ll) * count);
+    arr->numbers = calloc(count, sizeof(ll));
 
     FILE *f = fopen(filename, "r");
     while (1) {
@@ -66,7 +57,7 @@ numbers_array *read_array(char *filename) {
 
 numbers_array *sort(numbers_array *arr1, numbers_array *arr2) {
     numbers_array *result = (numbers_array *) malloc(sizeof(numbers_array));
-    result->numbers = (ll *) malloc(sizeof(ll) * (arr1->len + arr2->len));
+    result->numbers = calloc(arr1->len + arr2->len, sizeof(ll));
     result->len = (arr1->len + arr2->len);
 
     ll i = 0, j = 0, t = 0;
@@ -147,12 +138,13 @@ void sort_array(ll *numbers, ll n, ld time_quantum) {
     while ((p = s_pop(s)) != NULL) {
         ll pivot_index = sort_iteration(numbers, p->l, p->r, n);
         if (pivot_index == -1) {
+            free(p);
             continue;
         }
-        pair *p1 = (pair *) malloc(sizeof(pair));
+        pair *p1 = calloc(1, sizeof(pair));
         p1->l = p->l;
         p1->r = pivot_index;
-        pair *p2 = (pair *) malloc(sizeof(pair));
+        pair *p2 = calloc(1, sizeof(pair));
         p2->l = pivot_index;
         p2->r = p->r;
 
@@ -161,15 +153,16 @@ void sort_array(ll *numbers, ll n, ld time_quantum) {
         s_push(s, p1);
 
         if (get_microsec() - ts > time_quantum) {
-            coro_yield();
             ts = get_microsec();
+            coro_yield();
         }
     }
+    free(s->arr);
+    free(s);
 }
 
 
-int *
-coroutine_func_f(void *context) {
+int coroutine_func_f(void *context) {
     coro_args *args = context;
     printf("Started coroutine %s\n", args->name);
     while (1) {
@@ -180,16 +173,23 @@ coroutine_func_f(void *context) {
         }
         printf("Coro %s: take `%s` to sort\n", args->name, file->name);
         file->acquired = 1;
-        coro_yield();
         numbers_array *arr = read_array(file->name);
         sort_array(arr->numbers, arr->len, args->quantum);
         args->arrays[*args->arrays_len] = arr;
         *args->arrays_len = *args->arrays_len + 1;
     }
+    struct coro *coro = coro_this();
+    printf(
+            "Finished coro `%s`\nSwitch count: %lld, Busy time: %.3Lf microsec, Total time: %.3Lf microsec\n",
+           args->name,
+           coro->stats->switch_count,
+           coro->stats->work_time,
+           coro->stats->total_time
+    );
     // clean up only coro-specific data, do not clean shared objects
     free(args->name);
     free(context);
-    return NULL;
+    return 0;
 }
 
 int on_argparse_failed(char *message) {
@@ -262,43 +262,47 @@ main(int argc, char **argv) {
         args->files_len = files_count;
         args->arrays_len = &arrays_len;
         sprintf(args->name, "coro_%d", i);
-        coro_new((void *(*)(void *))&coroutine_func_f, args);
+        coro_new(coroutine_func_f, args);
     }
 
     struct coro *c;
     while ((c = coro_sched_wait()) != NULL) {
-        printf("Finished %lld\n", coro_switch_count(c));
         coro_delete(c);
     }
 
     // cleanup files_to_sort
     for (ll i = 0; i < files_count; i++) {
+        free(files[i]->name);
         free(files[i]);
     }
     free(files);
 
-    numbers_array result;
+    numbers_array *result = malloc(sizeof(numbers_array));
     ull first_array_to_alloc = sizeof(ll) * all_arrays[0]->len;
-    result.numbers = (ll *) malloc(first_array_to_alloc);
-    memcpy(result.numbers, all_arrays[0]->numbers, first_array_to_alloc);
-    result.len = all_arrays[0]->len;
+    result->numbers = (ll *) malloc(first_array_to_alloc);
+    memcpy(result->numbers, all_arrays[0]->numbers, first_array_to_alloc);
+    result->len = all_arrays[0]->len;
 
     for (ll i = 1; i < files_count; i++) {
-        numbers_array *new_result = sort(&result, all_arrays[i]);
-        free(result.numbers);
-        result = *new_result;
+        numbers_array *new_result = sort(result, all_arrays[i]);
+        free(result->numbers);
+        free(result);
+        result = new_result;
     }
 
     //cleanup all_arrays
     for (ll i = 0; i < files_count; i++) {
+        free(all_arrays[i]->numbers);
         free(all_arrays[i]);
     }
     free(all_arrays);
 
     FILE *output = fopen(outputname, "w");
-    for(ll i = 0; i < result.len; i++) {
-        fprintf(output, "%lld ", result.numbers[i]);
+    for(ll i = 0; i < result->len; i++) {
+        fprintf(output, "%lld ", result->numbers[i]);
     }
+    free(result->numbers);
+    free(result);
     fclose(output);
     return 0;
 }

@@ -2,9 +2,47 @@
 #define LIBCORO_INCLUDED
 
 #include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <setjmp.h>
+#include <signal.h>
+#include <errno.h>
+#include <string.h>
+#include "types.h"
 
-struct coro;
-typedef void *(*coro_f)(void *);
+typedef int (*coro_f)(void *);
+
+struct coro_stats {
+    ll switch_count;
+    /** Amount of microseconds the coro spent CPU **/
+    ld work_time;
+    /** `busy_time` + amount of microseconds the coro was in `waiting` state **/
+    ld total_time;
+
+    ld _last_finished_at;
+    ld _last_started_at;
+};
+/** Main coroutine structure, its context. */
+struct coro {
+    /** A value, returned by func. */
+    int ret;
+    /** Stack, used by the coroutine. */
+    void *stack;
+    /** An argument for the function func. */
+    void *func_arg;
+    /** A function to call as a coroutine. */
+    coro_f func;
+    /** Last remembered coroutine context. */
+    sigjmp_buf ctx;
+    /** True, if the coroutine has finished. */
+    bool is_finished;
+
+    struct coro_stats *stats;
+    /** Links in the coroutine list, used by scheduler. */
+    struct coro *next, *prev;
+};
+
 
 /** Make current context scheduler. */
 void

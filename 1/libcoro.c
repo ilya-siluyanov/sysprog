@@ -6,34 +6,9 @@
 #include <errno.h>
 #include <string.h>
 #include "libcoro.h"
+#include "timings.h"
 
 #define handle_error() ({printf("Error %s\n", strerror(errno)); exit(-1);})
-struct coro_stats {
-    long long switch_count;
-    /** Amount of microseconds the coro spent CPU **/
-    long double busy_time;
-    /** `busy_time` + amount of microseconds the coro was in `waiting` state **/
-    long double total_time;
-};
-/** Main coroutine structure, its context. */
-struct coro {
-	/** A value, returned by func. */
-	void *ret;
-	/** Stack, used by the coroutine. */
-	void *stack;
-	/** An argument for the function func. */
-	void *func_arg;
-	/** A function to call as a coroutine. */
-	coro_f func;
-	/** Last remembered coroutine context. */
-	sigjmp_buf ctx;
-	/** True, if the coroutine has finished. */
-	bool is_finished;
-
-    struct coro_stats *stats;
-	/** Links in the coroutine list, used by scheduler. */
-	struct coro *next, *prev;
-};
 
 /**
  * Scheduler is a main coroutine - it catches and returns dead
@@ -80,10 +55,10 @@ coro_list_delete(struct coro *c)
 		coro_list = next;
 }
 
-void *
-coro_status(const struct coro *c)
+struct coro_stats*
+coro_stats(const struct coro *c)
 {
-	return c->ret;
+	return c->stats;
 }
 
 long long
@@ -102,6 +77,7 @@ void
 coro_delete(struct coro *c)
 {
 	free(c->stack);
+    free(c->stats);
 	free(c);
 }
 
@@ -110,9 +86,25 @@ static void
 coro_yield_to(struct coro *to)
 {
 	struct coro *from = coro_this_ptr;
-	++from->stats->switch_count;
-	if (sigsetjmp(from->ctx, 0) == 0)
-		siglongjmp(to->ctx, 1);
+    if (from->stats != NULL) {
+	    ++from->stats->switch_count;
+
+        ld curr = get_microsec();
+        ld work_time = curr - from->stats->_last_started_at;
+        from->stats->_last_finished_at = curr;
+
+        from->stats->work_time += work_time;
+        from->stats->total_time += work_time;
+    }
+	if (sigsetjmp(from->ctx, 0) == 0) {
+        if (to->stats != NULL) {
+            ld curr = get_microsec();
+            ld wait_time = curr - to->stats->_last_finished_at;
+            to->stats->total_time += wait_time;
+            to->stats->_last_started_at = curr;
+        }
+        siglongjmp(to->ctx, 1);
+    }
 	coro_this_ptr = from;
 }
 
@@ -194,7 +186,6 @@ coro_new(coro_f func, void *func_arg)
 {
 	struct coro *c = (struct coro *) malloc(sizeof(*c));
     struct coro_stats *stats = (struct coro_stats *) malloc(sizeof(*stats));
-	c->ret = 0;
 	int stack_size = 1024 * 1024;
 	if (stack_size < SIGSTKSZ)
 		stack_size = SIGSTKSZ;
@@ -203,6 +194,10 @@ coro_new(coro_f func, void *func_arg)
 	c->func_arg = func_arg;
 	c->is_finished = false;
 	c->stats = stats;
+
+    ld curr = get_microsec();
+    c->stats->_last_started_at = curr;
+    c->stats->_last_finished_at = curr;
 	/*
 	 * SIGUSR2 is used. First of all, block new signals to be
 	 * able to set a new handler.

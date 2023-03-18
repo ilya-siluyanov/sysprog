@@ -1,6 +1,4 @@
-typedef long long ll;
-typedef long double ld;
-
+#include "types.h"
 
 typedef struct file_to_sort {
     char *name;

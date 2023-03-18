@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef long long ll;
+#include "types.h"
 
 typedef struct pair {
     ll l;
@@ -26,6 +25,7 @@ void s_resize(stack *s) {
     ll cap = s->cap * 2 + 1;
     pair **new_arr = (pair **) malloc(sizeof(pair *) * cap);
     memcpy(new_arr, s->arr, sizeof(pair) * s->len);
+    free(s->arr);
     s->arr = new_arr;
     s->cap = cap;
 }
@@ -38,7 +38,7 @@ void s_push(stack *s, pair *v) {
 }
 
 pair *s_pop(stack *s) {
-    if (s->len == 0) {
+    if (s->len <= 0) {
         return NULL;
     }
     return s->arr[--s->len];
