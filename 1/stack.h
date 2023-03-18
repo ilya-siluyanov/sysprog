@@ -46,8 +46,8 @@ pair *s_pop(stack *s) {
 
 void s_print(stack *s) {
     for(int i = 0; i < s->len;i++) {
-        printf("%d %d | ", s->arr[i]->l, s->arr[i]->r);
+        printf("%lld %lld | ", s->arr[i]->l, s->arr[i]->r);
     }
-    printf("\nLength: %d\n", s->len);
+    printf("\nLength: %lld\n", s->len);
 }
 

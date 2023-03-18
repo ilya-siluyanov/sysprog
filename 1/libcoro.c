@@ -8,11 +8,17 @@
 #include "libcoro.h"
 
 #define handle_error() ({printf("Error %s\n", strerror(errno)); exit(-1);})
-
+struct coro_stats {
+    long long switch_count;
+    /** Amount of microseconds the coro spent CPU **/
+    long double busy_time;
+    /** `busy_time` + amount of microseconds the coro was in `waiting` state **/
+    long double total_time;
+};
 /** Main coroutine structure, its context. */
 struct coro {
 	/** A value, returned by func. */
-	int ret;
+	void *ret;
 	/** Stack, used by the coroutine. */
 	void *stack;
 	/** An argument for the function func. */
@@ -23,7 +29,8 @@ struct coro {
 	sigjmp_buf ctx;
 	/** True, if the coroutine has finished. */
 	bool is_finished;
-	long long switch_count;
+
+    struct coro_stats *stats;
 	/** Links in the coroutine list, used by scheduler. */
 	struct coro *next, *prev;
 };
@@ -73,7 +80,7 @@ coro_list_delete(struct coro *c)
 		coro_list = next;
 }
 
-int
+void *
 coro_status(const struct coro *c)
 {
 	return c->ret;
@@ -82,7 +89,7 @@ coro_status(const struct coro *c)
 long long
 coro_switch_count(const struct coro *c)
 {
-	return c->switch_count;
+	return c->stats->switch_count;
 }
 
 bool
@@ -103,7 +110,7 @@ static void
 coro_yield_to(struct coro *to)
 {
 	struct coro *from = coro_this_ptr;
-	++from->switch_count;
+	++from->stats->switch_count;
 	if (sigsetjmp(from->ctx, 0) == 0)
 		siglongjmp(to->ctx, 1);
 	coro_this_ptr = from;
@@ -186,6 +193,7 @@ struct coro *
 coro_new(coro_f func, void *func_arg)
 {
 	struct coro *c = (struct coro *) malloc(sizeof(*c));
+    struct coro_stats *stats = (struct coro_stats *) malloc(sizeof(*stats));
 	c->ret = 0;
 	int stack_size = 1024 * 1024;
 	if (stack_size < SIGSTKSZ)
@@ -194,7 +202,7 @@ coro_new(coro_f func, void *func_arg)
 	c->func = func;
 	c->func_arg = func_arg;
 	c->is_finished = false;
-	c->switch_count = 0;
+	c->stats = stats;
 	/*
 	 * SIGUSR2 is used. First of all, block new signals to be
 	 * able to set a new handler.
@@ -255,3 +263,4 @@ coro_new(coro_f func, void *func_arg)
 	coro_list_add(c);
 	return c;
 }
+

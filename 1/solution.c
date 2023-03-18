@@ -8,6 +8,7 @@
 
 typedef long long ll;
 typedef long double ld;
+typedef unsigned long long ull;
 
 
 file_to_sort *find_file(file_to_sort **storage, ll size) {
@@ -19,16 +20,9 @@ file_to_sort *find_file(file_to_sort **storage, ll size) {
     return NULL;
 }
 
-void print_array(ll *arr, ll n) {
-    for (ll i = 0; i < n; i++) {
-        printf("%lld ", arr[i]);
-    }
-    printf("\n");
-}
-
 ld get_microsec() {
     struct timespec ts;
-    timespec_get(&ts, TIME_UTC);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
 
     return ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
@@ -38,7 +32,7 @@ ll numbers_count(char *filename) {
     ll count = 0;
     while (1) {
         ll num = 0;
-        int res = fscanf(f, "%d", &num);
+        int res = fscanf(f, "%lld", &num);
         if (res == -1)
             break;
         count++;
@@ -161,6 +155,8 @@ void sort_array(ll *numbers, ll n, ld time_quantum) {
         pair *p2 = (pair *) malloc(sizeof(pair));
         p2->l = pivot_index;
         p2->r = p->r;
+
+        free(p);
         s_push(s, p2);
         s_push(s, p1);
 
@@ -172,7 +168,7 @@ void sort_array(ll *numbers, ll n, ld time_quantum) {
 }
 
 
-static int
+int *
 coroutine_func_f(void *context) {
     coro_args *args = context;
     printf("Started coroutine %s\n", args->name);
@@ -190,18 +186,21 @@ coroutine_func_f(void *context) {
         args->arrays[*args->arrays_len] = arr;
         *args->arrays_len = *args->arrays_len + 1;
     }
-    return 0;
+    // clean up only coro-specific data, do not clean shared objects
+    free(args->name);
+    free(context);
+    return NULL;
 }
 
-int on_argparse_failed() {
-    printf("Cannot start. Call the binary with `-h` argument.\n");
+int on_argparse_failed(char *message) {
+    printf("%s\n", message);
     return 1;
 }
 
 int
 main(int argc, char **argv) {
     if (argc < 2) {
-        return on_argparse_failed();
+        return on_argparse_failed("Not enough arguments. Check help for example launch");
     }
     if (strcmp(argv[1], "-h") == 0) {
         printf("Example: ./a.out -t 1 -n 2 -o result.txt file1.txt [file2.txt [...]]\n");
@@ -213,17 +212,27 @@ main(int argc, char **argv) {
         return 0;
     }
 
-    if (argc < 7) {
-        return on_argparse_failed();
+    if (argc < 3 || strcmp(argv[1], "-t") != 0) {
+        return on_argparse_failed("Specify -t in the order specified in help");
     }
+
+    if (argc < 5 || strcmp("-n", argv[3]) != 0) {
+        return on_argparse_failed("Specify -n in the order specified in help");
+    }
+    if (argc < 7 || strcmp("-o", argv[5]) != 0) {
+        return on_argparse_failed("Specify -o in the order specified in help");
+    }
+
+    if (argc < 8) {
+        return on_argparse_failed("Did you provide a file to sort?");
+    }
+
     ll T = atoll(argv[2]);
     ll N = atoll(argv[4]);
     char *outputname = argv[6];
-    printf("Time quantum: %lld, Number of coroutines: %lld\n", T, N);
 
-    if (argc < 8) {
-        return on_argparse_failed();
-    }
+
+    printf("Time quantum: %lld, Number of coroutines: %lld\n", T, N);
 
     ll offset = 7;
     ll files_count = argc - offset;
@@ -233,8 +242,7 @@ main(int argc, char **argv) {
 
     for (int i = 0; i < files_count; i++) {
         file_to_sort *item = (file_to_sort *) malloc(sizeof(file_to_sort));
-        item->name = malloc(sizeof(char) * 256);
-        strcpy(item->name, argv[offset + i]);
+        item->name = strdup(argv[offset + i]);
         item->acquired = 0;
         files[i] = item;
     }
@@ -245,6 +253,7 @@ main(int argc, char **argv) {
 
     coro_sched_init();
     for (int i = 0; i < N; ++i) {
+        //cleaned up in coro func
         coro_args *args = (coro_args *) malloc(sizeof(coro_args));
         args->files = files;
         args->quantum = T / N;
@@ -253,7 +262,7 @@ main(int argc, char **argv) {
         args->files_len = files_count;
         args->arrays_len = &arrays_len;
         sprintf(args->name, "coro_%d", i);
-        coro_new(coroutine_func_f, args);
+        coro_new((void *(*)(void *))&coroutine_func_f, args);
     }
 
     struct coro *c;
@@ -262,14 +271,16 @@ main(int argc, char **argv) {
         coro_delete(c);
     }
 
-    ll sm = 0;
-    for(ll i = 0; i < files_count;i++) {
-        sm += all_arrays[i] -> len;
+    // cleanup files_to_sort
+    for (ll i = 0; i < files_count; i++) {
+        free(files[i]);
     }
+    free(files);
 
     numbers_array result;
-    result.numbers = (ll *) malloc(sizeof(ll) * sm);
-    memcpy(result.numbers, all_arrays[0]->numbers, sizeof(ll) * all_arrays[0]->len);
+    ull first_array_to_alloc = sizeof(ll) * all_arrays[0]->len;
+    result.numbers = (ll *) malloc(first_array_to_alloc);
+    memcpy(result.numbers, all_arrays[0]->numbers, first_array_to_alloc);
     result.len = all_arrays[0]->len;
 
     for (ll i = 1; i < files_count; i++) {
@@ -278,11 +289,17 @@ main(int argc, char **argv) {
         result = *new_result;
     }
 
+    //cleanup all_arrays
+    for (ll i = 0; i < files_count; i++) {
+        free(all_arrays[i]);
+    }
+    free(all_arrays);
+
     FILE *output = fopen(outputname, "w");
-    for(ll i = 0; i < sm; i++) {
+    for(ll i = 0; i < result.len; i++) {
         fprintf(output, "%lld ", result.numbers[i]);
     }
-
+    fclose(output);
     return 0;
 }
 
