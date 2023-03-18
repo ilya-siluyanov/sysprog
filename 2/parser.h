@@ -135,8 +135,17 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
                     printf("No char after \\\n: char %lld", *i + 1);
                     return NULL;
                 }
+                char char_to_add = cmd[++(*i)];
+                if (cmd[*i] == 'n') {
+                    /// \n found
+                    char_to_add = '\n';
+                }
+                if (cmd[*i] == 't') {
+                    /// \t found
+                    char_to_add = '\t';
+                }
                 (*i)++;
-                token[token_len++] = cmd[(*i)++];
+                token[token_len++] = char_to_add;
                 continue;
 
             case '"':
@@ -313,7 +322,7 @@ int execute_complete(complete_cmd *complete_cmd) {
     int status;
     waitpid(pids[n - 1], &status, 0);
     struct cmd *last_cmd = complete_cmd->cmdv[n - 1];
-    if (last_cmd->argc > 0 && strcmp(last_cmd->argv[0], "exit") == 0) {
+    if (last_cmd->argc == 1 && strcmp(last_cmd->argv[0], "exit") == 0) {
         exit_code = 0;
         if (last_cmd->argc > 1) {
             char *_;

@@ -79,7 +79,7 @@ tests = [
 prefix = '--------------------------------'
 
 def finish(code):
-	os.system('rm -rf testdir')
+	# os.system('rm -rf testdir')
 	sys.exit(code)
 
 def open_new_shell():
@@ -101,6 +101,7 @@ for section_i, section in enumerate(tests, 1):
 	for test_i, test in enumerate(section, 1):
 		command += 'echo "$> Test {}"\n'.format(test_i)
 		command += '{}\n'.format(test)
+		print(test)
 
 p = open_new_shell()
 try:
