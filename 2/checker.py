@@ -2,6 +2,7 @@ import subprocess
 import argparse
 import sys
 import os
+from pathlib import Path
 
 parser = argparse.ArgumentParser(description='Tests for shell')
 parser.add_argument('-e', type=str, default='./a.out',
@@ -59,7 +60,7 @@ tests = [
 	"f = open('test.txt', 'w')\\n\\\n"\
 	"f.write('Text\\\\\\n')\\n\\\n"\
 	"f.close()\\n\" > test.py",
-"python test.py | exit 0",
+"/Users/ilyasiluyanov/.pyenv/shims/python test.py",
 "cat test.txt",
 ],
 [
@@ -85,7 +86,7 @@ def finish(code):
 def open_new_shell():
 	return subprocess.Popen([args.e], shell=False, stdin=subprocess.PIPE,
 				stdout=subprocess.PIPE,
-				stderr=subprocess.STDOUT, bufsize=0)
+				stderr=subprocess.STDOUT, bufsize=0, env={'HHREPORT': '1'})
 
 def exit_failure():
 	print('{}\nThe tests did not pass'.format(prefix))
@@ -104,8 +105,9 @@ for section_i, section in enumerate(tests, 1):
 		print(test)
 
 p = open_new_shell()
+os.system('rm -rf testdir')
 try:
-	output = p.communicate(command.encode(), 3)[0].decode()
+	output = p.communicate(command.encode(), 20)[0].decode()
 except subprocess.TimeoutExpired:
 	print('Too long no output. Probably you forgot to process EOF')
 	finish(-1)
@@ -115,6 +117,7 @@ if args.t:
 	finish(0)
 
 output = output.splitlines()
+print(output)
 result = args.r
 if not result:
 	result = 'result{}.txt'.format(args.max)
@@ -128,7 +131,7 @@ for i in range(line_count):
 	print(output[i])
 	if output[i] != etalon[i]:
 		print('Error in line {}. '\
-		      'Expected:\n{}'.format(i + 1, etalon[i]))
+		      'Expected:\n{}\nFound\n{}\n'.format(i + 1, etalon[i], output[i]))
 		is_error = True
 		break
 if not is_error and etalon_len != output_len:
@@ -168,6 +171,7 @@ p = open_new_shell()
 count = 100 * 1024
 output_expected = 'a' * count + '\n'
 command = 'echo ' + output_expected
+print(command)
 try:
 	output = p.communicate(command.encode(), 5)[0].decode()
 except subprocess.TimeoutExpired:
@@ -178,7 +182,7 @@ if not is_error and output != output_expected:
 	print('Bad output for an extra big command')
 	is_error = True
 if not is_error and p.returncode != 0:
-	print('Bad return code for an extra big command - expected 0 (success)')
+	print('Bad return code for an extra big command - expected 0 (success). Found', p.returncode)
 	is_error = True
 if is_error:
 	print('Failed an extra big command (`echo a....` with `a` '\

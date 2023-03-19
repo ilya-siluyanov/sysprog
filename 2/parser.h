@@ -2,11 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "array.h"
-#include <stdlib.h>
 #include <unistd.h>
 #include <sys/file.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <errno.h>
+// #include "../utils/heap_help/heap_help.h"
 
 typedef struct read_raw_result {
     char *value;
@@ -19,7 +20,7 @@ read_raw_result *read_raw() {
     getcwd(cwd, CWD_SIZE);
     read_raw_result *r = malloc(sizeof(read_raw_result));
     r->value = NULL;
-    r->exit_code = 1;
+    r->exit_code = 0;
 
     // printf("\033[0;32m%s\033[0m > ", cwd);
     free(cwd);
@@ -86,6 +87,7 @@ read_raw_result *read_raw() {
     }
     arr_free(chars);
 
+    // printf("read raw: %lld\n", heaph_get_alloc_count());
     return r;
 }
 
@@ -133,19 +135,24 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
             case '\\':
                 if (*i + 1 > cmd_len) {
                     printf("No char after \\\n: char %lld", *i + 1);
+                    free(token);
+                    for(ll i = 0; i < arr_len(argv);i++) {
+                        free(argv->buf[i]);
+                    }
+                    arr_free(argv);
                     return NULL;
                 }
-                char char_to_add = cmd[++(*i)];
-                if (cmd[*i] == 'n') {
-                    /// \n found
-                    char_to_add = '\n';
+                if (literal == '\'') {
+                    token[token_len++] = cmd[*i];
+                } else if (literal == '\"') {
+                    token[token_len++] = cmd[(*i)++];
+                    if (cmd[*i] == '\\') {
+                        (*i)++;
+                    }
+                } else {
+                    token[token_len++] = cmd[++(*i)];
+                    (*i)++;
                 }
-                if (cmd[*i] == 't') {
-                    /// \t found
-                    char_to_add = '\t';
-                }
-                (*i)++;
-                token[token_len++] = char_to_add;
                 continue;
 
             case '"':
@@ -172,6 +179,11 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
                 }
                 if (*i + 1 > cmd_len) {
                     printf("End of command found: char %lld\n", *i);
+                    free(token);
+                    for(ll i = 0; i < arr_len(argv);i++) {
+                        free(argv->buf[i]);
+                    }
+                    arr_free(argv);
                     return NULL;
                 }
                 if (token_len > 0) {
@@ -225,6 +237,11 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
     }
 
     if (arr_len(argv) == 0) {
+        free(token);
+        free(argv->buf);
+        free(argv);
+        free(redirect_to);
+        // printf("parse command 0: %lld\n", heaph_get_alloc_count());
         return NULL;
     }
     arr_push_back(argv, NULL);
@@ -233,11 +250,14 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
     result->argv = (char **) argv->buf;
     result->redirect_to = redirect_to;
     if (target_redirect) {
+        free(result->redirect_to);
         result->redirect_to = strdup(token);
         result->o_append = o_append;
     }
     free(argv);
     free(token);
+
+    // printf("parse command 1: %lld\n", heaph_get_alloc_count());
     return result;
 }
 
@@ -255,6 +275,8 @@ complete_cmd *parse_complete(char *raw_cmd) {
     }
 
     if (arr_len(cmdv) == 0) {
+        free(raw_part);
+        arr_free(cmdv);
         return NULL;
     }
 
@@ -263,12 +285,15 @@ complete_cmd *parse_complete(char *raw_cmd) {
     complete_cmd->cmdc = arr_len(cmdv);
     free(cmdv);
 
+    // printf("parse complete: %lld\n", heaph_get_alloc_count());
     return complete_cmd;
 }
 
-pid_t run_process(struct cmd *cmd, int fd[][2], ll i, ll n) {
+pid_t run_process(struct complete_cmd *complete, struct cmd *cmd, int fd[][2], ll i, ll n) {
     if (strcmp(cmd->argv[0], "cd") == 0) {
-        chdir(cmd->argv[1]);
+        if (chdir(cmd->argv[1]) == -1) {
+            printf("\033[0;31mcd: %s\n\033[0m", strerror(errno));
+        }
         return 0;
     }
     int child_pid = fork();
@@ -285,10 +310,48 @@ pid_t run_process(struct cmd *cmd, int fd[][2], ll i, ll n) {
                 flags |= O_APPEND;
             else
                 flags |= O_TRUNC;
-            int fd = open(cmd->redirect_to, flags, S_IRWXU);
-            dup2(fd, STDOUT_FILENO);
+            int fds = open(cmd->redirect_to, flags, S_IRWXU);
+            dup2(fds, STDOUT_FILENO);
         }
-        execvp(strdup(cmd->argv[0]), cmd->argv);
+        if (cmd->argc > 0 && strcmp(cmd->argv[0], "exit") == 0) {
+            int exit_code = 0;
+            if (cmd->argc > 1) {
+                char *_;
+                exit_code = strtol(cmd->argv[1], &_, 10);
+            }
+            for(ll j = 0; j < complete->cmdc;j++) {
+                struct cmd *c = complete->cmdv[j];
+                for(ll k = 0; k < c->argc;k++) {
+                    free(c->argv[k]);
+                }
+                free(c->argv);
+                free(c->redirect_to);
+                free(c);
+            }
+            free(complete->cmdv);
+            free(complete);
+            exit(exit_code);
+        }
+        char *cmd_name = strdup(cmd->argv[0]);
+        execvp(cmd_name, cmd->argv);
+        for(ll j = 0; j < cmd->argc - 1;j++) {
+            printf("\033[0;31m%s ", cmd->argv[j]);
+        }
+        printf("%s", cmd->argv[cmd->argc - 1]);
+        printf(": %s\033[0m\n", strerror(errno));
+        for(ll j = 0; j < complete->cmdc;j++) {
+            struct cmd *c = complete->cmdv[j];
+            for(ll k = 0; k < c->argc;k++) {
+                free(c->argv[k]);
+            }
+            free(c->argv);
+            free(c->redirect_to);
+            free(c);
+        }
+        free(complete->cmdv);
+        free(complete);
+        free(cmd_name);
+        exit(errno);
     }
     return child_pid;
 }
@@ -307,26 +370,27 @@ int execute_complete(complete_cmd *complete_cmd) {
 
     for (ll i = 0; i < complete_cmd->cmdc; i++) {
         struct cmd *cmd = complete_cmd->cmdv[i];
-        pids[i] = run_process(cmd, fds, i + 1, n);
+        pids[i] = run_process(complete_cmd, cmd, fds, i + 1, n);
     }
     for(ll i = 0; i < n + 1;i++) {
         close(fds[i][0]);
         close(fds[i][1]);
     }
 
-    for(ll i = 0; i < n - 1;i++) {
-        waitpid(pids[i], NULL, 0);
-    }
-
-    int exit_code = -1;
     int status;
-    waitpid(pids[n - 1], &status, 0);
-    struct cmd *last_cmd = complete_cmd->cmdv[n - 1];
-    if (last_cmd->argc == 1 && strcmp(last_cmd->argv[0], "exit") == 0) {
-        exit_code = 0;
-        if (last_cmd->argc > 1) {
-            char *_;
-            exit_code = strtol(last_cmd->argv[1], &_, 10);
+    int child_pid;
+    int exit_code = -1;
+    while ((child_pid = wait(&status)) > 0) {
+        if (child_pid != pids[n - 1]) {
+            continue;
+        }
+        struct cmd *last_cmd = complete_cmd->cmdv[n - 1];
+        if (complete_cmd->cmdc == 1 && last_cmd->argc > 0 && strcmp(last_cmd->argv[0], "exit") == 0) {
+            exit_code = 0;
+            if (last_cmd->argc > 1) {
+                char *_;
+                exit_code = strtol(last_cmd->argv[1], &_, 10);
+            }
         }
     }
 
@@ -336,13 +400,9 @@ int execute_complete(complete_cmd *complete_cmd) {
             free(cmd->argv[j]);
         }
         free(cmd->argv);
-        if (cmd->redirect_to) {
-            free(cmd->redirect_to);
-        }
+        free(cmd->redirect_to);
         free(cmd);
     }
-    free(complete_cmd->cmdv);
-    free(complete_cmd);
-
+    // printf("exec complete: %lld\n", heaph_get_alloc_count());
     return exit_code;
 }
