@@ -12,25 +12,23 @@ int iteration() {
         free(raw);
         return to_return;
     }
-    complete_cmd *complete = parse_complete(raw -> value);
+    pipeline_list pl = parse_pipeline_list(raw -> value);
+    pipeline_result result = execute_pipeline_list(&pl);
 
     free(raw->value);
     free(raw);
 
-    if (complete == NULL) {
-        free(complete);
+    if (!result.should_exit) {
         return -1;
     }
-    int exit_code = execute_complete(complete);
-    free(complete->cmdv);
-    free(complete);
     // printf("Leaks: %llu\n", heaph_get_alloc_count());
-    return exit_code;
+    return result.exit_code;
 }
 
 int main() {
     // heaph_init();
     int exit_code;
     while ((exit_code = iteration()) < 0);
+    //FIXME: wait for zombies
     return exit_code;
 }

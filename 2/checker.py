@@ -87,6 +87,7 @@ def open_new_shell():
 	return subprocess.Popen([args.e], shell=False, stdin=subprocess.PIPE,
 				stdout=subprocess.PIPE,
 				stderr=subprocess.STDOUT, bufsize=0, env={'HHREPORT': '1'})
+			#	stderr=subprocess.STDOUT, bufsize=0)
 
 def exit_failure():
 	print('{}\nThe tests did not pass'.format(prefix))
@@ -117,7 +118,6 @@ if args.t:
 	finish(0)
 
 output = output.splitlines()
-print(output)
 result = args.r
 if not result:
 	result = 'result{}.txt'.format(args.max)

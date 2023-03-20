@@ -14,6 +14,69 @@ typedef struct read_raw_result {
     int exit_code;
 } read_raw_result;
 
+struct cmd {
+    char **argv;
+    ll argc;
+
+    char *redirect_to;
+    int o_append;
+
+    int in_background;
+};
+
+typedef struct pipeline {
+    struct cmd **cmdv;
+    ll cmdc;
+
+    int in_background;
+
+    /// 0 - do not wait
+    /// 1 - wait zero
+    /// 2 - wait nonzero
+    int wait_prev;
+} pipeline;
+
+typedef struct pipeline_result {
+    int exit_code;
+    int should_exit;
+} pipeline_result;
+
+typedef struct pipeline_list {
+    pipeline **pipelines;
+    ll count;
+} pipeline_list;
+
+char *arr_to_str(array *arr) {
+    /// takes ownership on the arr
+    char *result = calloc(arr_len(arr) + 1, sizeof(char));
+    for(ll j = 0; j < arr_len(arr);j++) {
+        char x = *((char *)arr->buf[j]);
+        result[j] = x;
+        free(arr->buf[j]);
+    }
+    arr_free(arr);
+    return result;
+}
+
+void cleanup_pipeline_list(pipeline_list *pl) {
+    for (ll i = 0; i < pl->count;i++) {
+        pipeline *pipeline = pl->pipelines[i];
+        for (ll j = 0; j < pipeline->cmdc;j++) {
+            struct cmd *cmd = pipeline->cmdv[j];
+            for (ll k = 0; k < cmd->argc;k++) {
+                free(cmd->argv[k]);
+            }
+            free(cmd->argv);
+            free(cmd->redirect_to);
+            free(cmd);
+        }
+        free(pipeline->cmdv);
+        free(pipeline);
+    }
+    free(pl->pipelines);
+    free(pl);
+}
+
 read_raw_result *read_raw() {
     ll CWD_SIZE = 150;
     char *cwd = calloc(CWD_SIZE + 1, sizeof(char));
@@ -91,23 +154,7 @@ read_raw_result *read_raw() {
     return r;
 }
 
-
-struct cmd {
-    char **argv;
-    ll argc;
-
-    char *redirect_to;
-    int o_append;
-};
-
-
-typedef struct complete_cmd {
-    struct cmd **cmdv;
-    ll cmdc;
-} complete_cmd;
-
-
-struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
+struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
     char *token = calloc(cmd_len + 1, sizeof(char));
     ll token_len = 0;
 
@@ -115,23 +162,26 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
     int o_append = 0;
     char *redirect_to = NULL;
 
+    struct cmd cmd;
+    cmd.argc = 0;
+
     /// one of '\0', '\'', '"'
     char literal = '\0';
     int target_redirect = 0;
     int comment = 0;
+    int in_background = 0;
 
     while (*i < cmd_len) {
         if (comment) {
-            if (cmd[*i] == '\n')
+            if (raw_cmd[*i] == '\n')
                 comment = 0;
             (*i)++;
             continue;
         }
-        switch (cmd[*i]) {
+        switch (raw_cmd[*i]) {
             case '#':
                 comment = 1;
                 continue;
-
             case '\\':
                 if (*i + 1 > cmd_len) {
                     printf("No char after \\\n: char %lld", *i + 1);
@@ -140,17 +190,17 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
                         free(argv->buf[i]);
                     }
                     arr_free(argv);
-                    return NULL;
+                    return cmd;
                 }
                 if (literal == '\'') {
-                    token[token_len++] = cmd[*i];
+                    token[token_len++] = raw_cmd[*i];
                 } else if (literal == '\"') {
-                    token[token_len++] = cmd[(*i)++];
-                    if (cmd[*i] == '\\') {
+                    token[token_len++] = raw_cmd[(*i)++];
+                    if (raw_cmd[*i] == '\\') {
                         (*i)++;
                     }
                 } else {
-                    token[token_len++] = cmd[++(*i)];
+                    token[token_len++] = raw_cmd[++(*i)];
                     (*i)++;
                 }
                 continue;
@@ -159,12 +209,12 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
             case '\'':
                 /// start of finish string token
                 if (literal == '\0') {
-                    literal = cmd[(*i)++];
+                    literal = raw_cmd[(*i)++];
                     break;
                 }
                 /// "a'bc", 'a"bcd'
-                if (literal != cmd[*i]) {
-                    token[token_len++] = cmd[(*i)++];
+                if (literal != raw_cmd[*i]) {
+                    token[token_len++] = raw_cmd[(*i)++];
                     break;
                 }
                 /// "abc", 'abc'
@@ -174,17 +224,17 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
 
             case '>':
                 if (literal) {
-                    token[token_len++] = cmd[(*i)++];
+                    token[token_len++] = raw_cmd[(*i)++];
                     break;
                 }
                 if (*i + 1 > cmd_len) {
                     printf("End of command found: char %lld\n", *i);
                     free(token);
-                    for(ll i = 0; i < arr_len(argv);i++) {
-                        free(argv->buf[i]);
+                    for(ll j = 0; j < arr_len(argv);j++) {
+                        free(argv->buf[j]);
                     }
                     arr_free(argv);
-                    return NULL;
+                    return cmd;
                 }
                 if (token_len > 0) {
                     char *tok = strdup(token);
@@ -194,7 +244,7 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
                     token_len = 0;
                 }
                 target_redirect = 1;
-                char next_tok = cmd[*i + 1];
+                char next_tok = raw_cmd[*i + 1];
                 if (next_tok == '>') {
                     /// append
                     o_append = 1;
@@ -205,7 +255,7 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
 
             case ' ':
                 if (literal) {
-                    token[token_len++] = cmd[(*i)++];
+                    token[token_len++] = raw_cmd[(*i)++];
                     break;
                 }
                 if (token_len == 0) {
@@ -226,8 +276,14 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
 
                 (*i)++;
                 break;
+            case '&':
+                if (literal == '\0') {
+                    in_background = 1;
+                    (*i)++;
+                    break;
+                }
             default:
-                token[token_len++] = cmd[*i];
+                token[token_len++] = raw_cmd[*i];
                 (*i)++;
         }
     }
@@ -242,54 +298,128 @@ struct cmd *parse_command(char const *cmd, ll cmd_len, ll *i) {
         free(argv);
         free(redirect_to);
         // printf("parse command 0: %lld\n", heaph_get_alloc_count());
-        return NULL;
+        return cmd;
     }
     arr_push_back(argv, NULL);
-    struct cmd *result = malloc(sizeof(struct cmd));
-    result->argc = arr_len(argv) - 1;
-    result->argv = (char **) argv->buf;
-    result->redirect_to = redirect_to;
+    cmd.argc = arr_len(argv) - 1;
+    cmd.argv = (char **) argv->buf;
+    cmd.redirect_to = redirect_to;
+    cmd.in_background = in_background;
     if (target_redirect) {
-        free(result->redirect_to);
-        result->redirect_to = strdup(token);
-        result->o_append = o_append;
+        free(cmd.redirect_to);
+        cmd.redirect_to = strdup(token);
+        cmd.o_append = o_append;
     }
     free(argv);
     free(token);
 
     // printf("parse command 1: %lld\n", heaph_get_alloc_count());
-    return result;
+    return cmd;
 }
 
-
-complete_cmd *parse_complete(char *raw_cmd) {
+pipeline parse_pipeline(char *raw_cmd) {
     char *raw_part = strtok(raw_cmd, "|");
-
     array *cmdv = arr_new();
+    pipeline pipeline;
+    pipeline.cmdc = 0;
     while (raw_part != NULL) {
         ll i = 0;
-        struct cmd *cmd = parse_command(raw_part, strlen(raw_part), &i);
-        if (cmd != NULL)
-            arr_push_back(cmdv, cmd);
+        struct cmd cmd = parse_command(raw_part, strlen(raw_part), &i);
+        if (cmd.argc > 0) {
+            struct cmd *cmd_p = calloc(1, sizeof(struct cmd));
+            memcpy(cmd_p, &cmd, sizeof(struct cmd));
+            arr_push_back(cmdv, cmd_p);
+        }
         raw_part = strtok(NULL, "|");
     }
 
     if (arr_len(cmdv) == 0) {
         free(raw_part);
         arr_free(cmdv);
-        return NULL;
+        return pipeline;
     }
 
-    complete_cmd *complete_cmd = malloc(sizeof(complete_cmd));
-    complete_cmd->cmdv = (struct cmd **) cmdv->buf;
-    complete_cmd->cmdc = arr_len(cmdv);
+    pipeline.cmdv = (struct cmd **) cmdv->buf;
+    pipeline.cmdc = arr_len(cmdv);
+    if (pipeline.cmdc > 0) {
+        pipeline.in_background = pipeline.cmdv[pipeline.cmdc - 1]->in_background;
+    }
     free(cmdv);
 
     // printf("parse complete: %lld\n", heaph_get_alloc_count());
-    return complete_cmd;
+    return pipeline;
 }
 
-pid_t run_process(struct complete_cmd *complete, struct cmd *cmd, int fd[][2], ll i, ll n) {
+pipeline_list parse_pipeline_list(char *raw_cmd) {
+    array *pipelines = arr_new();
+    array *chars = arr_new();
+    ll i = 0;
+    ll n = strlen(raw_cmd);
+    int prev_flag = 0;
+    pipeline_list pl;
+    while(i < n) {
+        char curr = raw_cmd[i];
+        if (i + 1 >= n) {
+            char *x_p = calloc(1, sizeof(char));
+            x_p[0] = curr;
+            arr_push_back(chars, x_p);
+            i++;
+            continue;
+        }
+        char next = raw_cmd[i + 1];
+        int and_found = curr == '&' && next == '&';
+        int or_found = curr == '|' && next == '|';
+
+        if (!and_found && !or_found) {
+            char *x_p = calloc(1, sizeof(char));
+            x_p[0] = curr;
+            arr_push_back(chars, x_p);
+            i++;
+            continue;
+        }
+        i += 2;
+
+        char *raw_pipeline = arr_to_str(chars);
+        chars = arr_new();
+
+        pipeline pipeline = parse_pipeline(raw_pipeline);
+        if (pipeline.cmdc == 0) {
+            break;
+        }
+        if (prev_flag) {
+            pipeline.wait_prev = prev_flag;
+        }
+        if (or_found) {
+            prev_flag = 1;
+        } else {
+            prev_flag = 2;
+        }
+        arr_push_back(pipelines, &pipeline);
+    }
+    if (arr_len(chars) > 0) {
+        char *raw_pipeline = arr_to_str(chars);
+        pipeline pipeline = parse_pipeline(raw_pipeline);
+        if (pipeline.cmdc > 0) {
+            arr_push_back(pipelines, &pipeline);
+        }
+        // last_result = execute_pipeline(pipeline);
+    }
+
+    pl.count = arr_len(pipelines);
+    pl.pipelines = calloc(pl.count, sizeof(pipeline *));
+    for (i = 0; i < arr_len(pipelines);i++) {
+        pipeline *p = arr_pop(pipelines);
+        pipeline *heap_pipeline = calloc(1, sizeof(pipeline));
+        memcpy(heap_pipeline, p, sizeof(pipeline));
+        pl.pipelines[i] = heap_pipeline;
+    }
+    arr_free(pipelines);
+    return pl;
+}
+
+pid_t run_process(pipeline_list *pl, ll pipeline_n, ll cmd_n, int fd[][2]) {
+    pipeline *pipeline = pl->pipelines[pipeline_n];
+    struct cmd *cmd = pipeline->cmdv[cmd_n - 1];
     if (strcmp(cmd->argv[0], "cd") == 0) {
         if (chdir(cmd->argv[1]) == -1) {
             printf("\033[0;31mcd: %s\n\033[0m", strerror(errno));
@@ -298,9 +428,10 @@ pid_t run_process(struct complete_cmd *complete, struct cmd *cmd, int fd[][2], l
     }
     int child_pid = fork();
     if (child_pid == 0) {
-        dup2(fd[i - 1][0], STDIN_FILENO);
-        dup2(fd[i][1], STDOUT_FILENO);
-        for(ll j = 0; j < n + 1;j++) {
+        dup2(fd[cmd_n - 1][0], STDIN_FILENO);
+        dup2(fd[cmd_n][1], STDOUT_FILENO);
+
+        for(ll j = 0; j < pipeline->cmdc + 1;j++) {
             close(fd[j][0]);
             close(fd[j][1]);
         }
@@ -319,45 +450,28 @@ pid_t run_process(struct complete_cmd *complete, struct cmd *cmd, int fd[][2], l
                 char *_;
                 exit_code = strtol(cmd->argv[1], &_, 10);
             }
-            for(ll j = 0; j < complete->cmdc;j++) {
-                struct cmd *c = complete->cmdv[j];
-                for(ll k = 0; k < c->argc;k++) {
-                    free(c->argv[k]);
-                }
-                free(c->argv);
-                free(c->redirect_to);
-                free(c);
-            }
-            free(complete->cmdv);
-            free(complete);
+            cleanup_pipeline_list(pl);
             exit(exit_code);
         }
+
         char *cmd_name = strdup(cmd->argv[0]);
         execvp(cmd_name, cmd->argv);
+
         for(ll j = 0; j < cmd->argc - 1;j++) {
             printf("\033[0;31m%s ", cmd->argv[j]);
         }
         printf("%s", cmd->argv[cmd->argc - 1]);
         printf(": %s\033[0m\n", strerror(errno));
-        for(ll j = 0; j < complete->cmdc;j++) {
-            struct cmd *c = complete->cmdv[j];
-            for(ll k = 0; k < c->argc;k++) {
-                free(c->argv[k]);
-            }
-            free(c->argv);
-            free(c->redirect_to);
-            free(c);
-        }
-        free(complete->cmdv);
-        free(complete);
-        free(cmd_name);
+
+        cleanup_pipeline_list(pl);
         exit(errno);
     }
     return child_pid;
 }
 
-int execute_complete(complete_cmd *complete_cmd) {
-    ll n = complete_cmd->cmdc;
+pipeline_result execute_pipeline(pipeline_list *pl, ll pipeline_n) {
+    pipeline *pipeline = pl->pipelines[pipeline_n];
+    ll n = pipeline->cmdc;
     int fds[n + 1][2];
     pid_t pids[n];
 
@@ -368,34 +482,33 @@ int execute_complete(complete_cmd *complete_cmd) {
     dup2(STDOUT_FILENO, fds[n][1]);
 
 
-    for (ll i = 0; i < complete_cmd->cmdc; i++) {
-        struct cmd *cmd = complete_cmd->cmdv[i];
-        pids[i] = run_process(complete_cmd, cmd, fds, i + 1, n);
+    for (ll i = 0; i < pipeline->cmdc; i++) {
+        struct cmd *cmd = pipeline->cmdv[i];
+        pids[i] = run_process(pl, pipeline_n, i + 1, fds);
     }
     for(ll i = 0; i < n + 1;i++) {
         close(fds[i][0]);
         close(fds[i][1]);
     }
 
+    pipeline_result result;
     int status;
-    int child_pid;
-    int exit_code = -1;
-    while ((child_pid = wait(&status)) > 0) {
-        if (child_pid != pids[n - 1]) {
-            continue;
-        }
-        struct cmd *last_cmd = complete_cmd->cmdv[n - 1];
-        if (complete_cmd->cmdc == 1 && last_cmd->argc > 0 && strcmp(last_cmd->argv[0], "exit") == 0) {
-            exit_code = 0;
-            if (last_cmd->argc > 1) {
-                char *_;
-                exit_code = strtol(last_cmd->argv[1], &_, 10);
-            }
-        }
+    for(ll i = 0; i < pipeline->cmdc;i++) {
+        waitpid(pids[i], &status, 0);
     }
 
-    for(ll i = 0; i < complete_cmd->cmdc;i++) {
-        struct cmd *cmd = complete_cmd->cmdv[i];
+    // FIXME: cover cases other than exit
+    result.exit_code = 0;
+    if (WIFEXITED(status))
+        result.exit_code = WEXITSTATUS(status);
+
+    struct cmd *last_cmd = pipeline->cmdv[n - 1];
+    if (pipeline->cmdc == 1 && last_cmd->argc > 0 && strcmp(last_cmd->argv[0], "exit") == 0) {
+        result.should_exit = 1;
+    }
+
+    for(ll i = 0; i < pipeline->cmdc;i++) {
+        struct cmd *cmd = pipeline->cmdv[i];
         for(ll j = 0; j < cmd->argc;j++) {
             free(cmd->argv[j]);
         }
@@ -404,5 +517,33 @@ int execute_complete(complete_cmd *complete_cmd) {
         free(cmd);
     }
     // printf("exec complete: %lld\n", heaph_get_alloc_count());
-    return exit_code;
+    return result;
+}
+
+pipeline_result execute_pipeline_list(pipeline_list *pl) {
+    pipeline_result result;
+    result.exit_code = 0;
+    result.should_exit = 0;
+
+    if (pl->count == 0) {
+        return result;
+    }
+    if (pl->pipelines[pl->count - 1]->in_background) {
+        /// run in background
+        return result;
+    }
+    result = execute_pipeline(pl, 0);
+    for(ll i = 1; i < pl->count; i++) {
+        pipeline pipeline = *pl->pipelines[i];
+        if (pipeline.wait_prev == 2 && result.exit_code != 0) {
+            /// wait and, but received nonzero
+            continue;
+        }
+        if (pipeline.wait_prev == 1 && result.exit_code == 0) {
+            /// wait and, but received zero
+            continue;
+        }
+        result = execute_pipeline(pl, i);
+    }
+    return result;
 }
