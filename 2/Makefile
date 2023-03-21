@@ -18,7 +18,7 @@ run:
 
 test:
 	$(MAKE) build
-	python checker.py --max 20
+	python checker.py --max 25
 
 run-s:
 	$(MAKE) clean

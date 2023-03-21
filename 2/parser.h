@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
-// #include "../utils/heap_help/heap_help.h"
+#include "../utils/heap_help/heap_help.h"
 
 typedef struct read_raw_result {
     char *value;
@@ -31,9 +31,9 @@ typedef struct pipeline {
     int in_background;
 
     /// 0 - do not wait
-    /// 1 - wait zero
-    /// 2 - wait nonzero
-    int wait_prev;
+    /// 1 - if zero (and)
+    /// 2 - if nonzero (or)
+    int prev_wait;
 } pipeline;
 
 typedef struct pipeline_result {
@@ -44,6 +44,8 @@ typedef struct pipeline_result {
 typedef struct pipeline_list {
     pipeline **pipelines;
     ll count;
+
+    int in_background;
 } pipeline_list;
 
 char *arr_to_str(array *arr) {
@@ -58,32 +60,38 @@ char *arr_to_str(array *arr) {
     return result;
 }
 
+void cleanup_cmd(struct cmd *cmd) {
+    for (ll k = 0; k < cmd->argc; k++) {
+        free(cmd->argv[k]);
+    }
+    free(cmd->argv);
+    free(cmd->redirect_to);
+    free(cmd);
+}
+
+void cleanup_pipeline(pipeline *pipeline) {
+    for (ll j = 0; j < pipeline->cmdc; j++) {
+        struct cmd *cmd = pipeline->cmdv[j];
+        cleanup_cmd(cmd);
+    }
+    free(pipeline->cmdv);
+    free(pipeline);
+}
+
 void cleanup_pipeline_list(pipeline_list *pl) {
     for (ll i = 0; i < pl->count;i++) {
         pipeline *pipeline = pl->pipelines[i];
-        for (ll j = 0; j < pipeline->cmdc;j++) {
-            struct cmd *cmd = pipeline->cmdv[j];
-            for (ll k = 0; k < cmd->argc;k++) {
-                free(cmd->argv[k]);
-            }
-            free(cmd->argv);
-            free(cmd->redirect_to);
-            free(cmd);
-        }
-        free(pipeline->cmdv);
-        free(pipeline);
+        cleanup_pipeline(pipeline);
     }
     free(pl->pipelines);
     free(pl);
 }
 
-read_raw_result *read_raw() {
+read_raw_result read_raw() {
     ll CWD_SIZE = 150;
     char *cwd = calloc(CWD_SIZE + 1, sizeof(char));
     getcwd(cwd, CWD_SIZE);
-    read_raw_result *r = malloc(sizeof(read_raw_result));
-    r->value = NULL;
-    r->exit_code = 0;
+    read_raw_result r = {.value = NULL, .exit_code = 0};
 
     // printf("\033[0;32m%s\033[0m > ", cwd);
     free(cwd);
@@ -92,7 +100,7 @@ read_raw_result *read_raw() {
     int should_exit = 1;
     int prev_slash = 0;
     char literal = '\0';
-    int eof = 0;
+    int eol = 0;
     while ((c = fgetc(stdin)) != EOF) {
         char x = (char) c;
         should_exit = 0;
@@ -109,7 +117,7 @@ read_raw_result *read_raw() {
                 break;
             case '\n':
                 if (!prev_slash && literal == '\0') {
-                    eof = 1;
+                    eol = 1;
                     break;
                 }
                 prev_slash = 0;
@@ -119,7 +127,7 @@ read_raw_result *read_raw() {
                     continue;
                 }
         }
-        if (eof)
+        if (eol)
             break;
         prev_slash = 0;
         if (x == '\\') {
@@ -129,6 +137,12 @@ read_raw_result *read_raw() {
         x_p[0] = x;
         arr_push_back(chars, x_p);
     }
+    if (arr_len(chars) == 0) {
+        arr_free(chars);
+        if (eol)
+            r.exit_code = -1;
+        return r;
+    }
 
     if (should_exit) {
         arr_free(chars);
@@ -137,16 +151,15 @@ read_raw_result *read_raw() {
 
     if (arr_len(chars) == 0) {
         arr_free(chars);
-        r->exit_code = 2;
+        r.exit_code = 2;
         return r;
     }
 
-    r->value = calloc(arr_len(chars) + 1, sizeof(char));
+    r.value = calloc(arr_len(chars) + 1, sizeof(char));
     for (ll i = 0; i < arr_len(chars); i++) {
         char x = *((char *) chars->buf[i]);
-        r->value[i] = x;
+        r.value[i] = x;
         free(chars->buf[i]);
-
     }
     arr_free(chars);
 
@@ -162,8 +175,7 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
     int o_append = 0;
     char *redirect_to = NULL;
 
-    struct cmd cmd;
-    cmd.argc = 0;
+    struct cmd cmd = {.argv = NULL, .argc = 0};
 
     /// one of '\0', '\'', '"'
     char literal = '\0';
@@ -239,6 +251,7 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
                 if (token_len > 0) {
                     char *tok = strdup(token);
                     arr_push_back(argv, tok);
+
                     free(token);
                     token = calloc(cmd_len + 1, sizeof(char));
                     token_len = 0;
@@ -273,7 +286,6 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
                     arr_push_back(argv, tok);
                     break;
                 }
-
                 (*i)++;
                 break;
             case '&':
@@ -283,8 +295,7 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
                     break;
                 }
             default:
-                token[token_len++] = raw_cmd[*i];
-                (*i)++;
+                token[token_len++] = raw_cmd[(*i)++];
         }
     }
 
@@ -294,8 +305,7 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
 
     if (arr_len(argv) == 0) {
         free(token);
-        free(argv->buf);
-        free(argv);
+        arr_free(argv);
         free(redirect_to);
         // printf("parse command 0: %lld\n", heaph_get_alloc_count());
         return cmd;
@@ -312,7 +322,6 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
     }
     free(argv);
     free(token);
-
     // printf("parse command 1: %lld\n", heaph_get_alloc_count());
     return cmd;
 }
@@ -320,8 +329,7 @@ struct cmd parse_command(char const *raw_cmd, ll cmd_len, ll *i) {
 pipeline parse_pipeline(char *raw_cmd) {
     char *raw_part = strtok(raw_cmd, "|");
     array *cmdv = arr_new();
-    pipeline pipeline;
-    pipeline.cmdc = 0;
+    pipeline pipeline = {.cmdv = NULL, .cmdc = 0, .in_background = 0};
     while (raw_part != NULL) {
         ll i = 0;
         struct cmd cmd = parse_command(raw_part, strlen(raw_part), &i);
@@ -345,8 +353,7 @@ pipeline parse_pipeline(char *raw_cmd) {
         pipeline.in_background = pipeline.cmdv[pipeline.cmdc - 1]->in_background;
     }
     free(cmdv);
-
-    // printf("parse complete: %lld\n", heaph_get_alloc_count());
+    //printf("parse complete: %lld\n", heaph_get_alloc_count());
     return pipeline;
 }
 
@@ -383,37 +390,42 @@ pipeline_list parse_pipeline_list(char *raw_cmd) {
         chars = arr_new();
 
         pipeline pipeline = parse_pipeline(raw_pipeline);
+        free(raw_pipeline);
+        pipeline.prev_wait = prev_flag;
+
         if (pipeline.cmdc == 0) {
             break;
         }
-        if (prev_flag) {
-            pipeline.wait_prev = prev_flag;
-        }
-        if (or_found) {
+        if (and_found) {
             prev_flag = 1;
         } else {
             prev_flag = 2;
         }
-        arr_push_back(pipelines, &pipeline);
+        struct pipeline *pipeline_p = calloc(1, sizeof(pipeline));
+        memcpy(pipeline_p, &pipeline, sizeof(pipeline));
+        arr_push_back(pipelines, pipeline_p);
     }
+
     if (arr_len(chars) > 0) {
         char *raw_pipeline = arr_to_str(chars);
         pipeline pipeline = parse_pipeline(raw_pipeline);
+        pipeline.prev_wait = prev_flag;
+        free(raw_pipeline);
         if (pipeline.cmdc > 0) {
-            arr_push_back(pipelines, &pipeline);
+            struct pipeline *pipeline_p = calloc(1, sizeof(pipeline));
+            memcpy(pipeline_p, &pipeline, sizeof(pipeline));
+            arr_push_back(pipelines, pipeline_p);
         }
-        // last_result = execute_pipeline(pipeline);
+    } else {
+        arr_free(chars);
     }
 
     pl.count = arr_len(pipelines);
-    pl.pipelines = calloc(pl.count, sizeof(pipeline *));
-    for (i = 0; i < arr_len(pipelines);i++) {
-        pipeline *p = arr_pop(pipelines);
-        pipeline *heap_pipeline = calloc(1, sizeof(pipeline));
-        memcpy(heap_pipeline, p, sizeof(pipeline));
-        pl.pipelines[i] = heap_pipeline;
+    pl.pipelines = (pipeline **)pipelines->buf;
+    if(pl.count > 0) {
+        pl.in_background = pl.pipelines[pl.count - 1]->in_background;
     }
-    arr_free(pipelines);
+    free(pipelines);
     return pl;
 }
 
@@ -456,6 +468,7 @@ pid_t run_process(pipeline_list *pl, ll pipeline_n, ll cmd_n, int fd[][2]) {
 
         char *cmd_name = strdup(cmd->argv[0]);
         execvp(cmd_name, cmd->argv);
+        free(cmd_name);
 
         for(ll j = 0; j < cmd->argc - 1;j++) {
             printf("\033[0;31m%s ", cmd->argv[j]);
@@ -483,7 +496,6 @@ pipeline_result execute_pipeline(pipeline_list *pl, ll pipeline_n) {
 
 
     for (ll i = 0; i < pipeline->cmdc; i++) {
-        struct cmd *cmd = pipeline->cmdv[i];
         pids[i] = run_process(pl, pipeline_n, i + 1, fds);
     }
     for(ll i = 0; i < n + 1;i++) {
@@ -491,7 +503,10 @@ pipeline_result execute_pipeline(pipeline_list *pl, ll pipeline_n) {
         close(fds[i][1]);
     }
 
-    pipeline_result result;
+    pipeline_result result = {.should_exit = 0, .exit_code = 0};
+    if (pipeline->in_background){
+        return result;
+    }
     int status;
     for(ll i = 0; i < pipeline->cmdc;i++) {
         waitpid(pids[i], &status, 0);
@@ -507,15 +522,6 @@ pipeline_result execute_pipeline(pipeline_list *pl, ll pipeline_n) {
         result.should_exit = 1;
     }
 
-    for(ll i = 0; i < pipeline->cmdc;i++) {
-        struct cmd *cmd = pipeline->cmdv[i];
-        for(ll j = 0; j < cmd->argc;j++) {
-            free(cmd->argv[j]);
-        }
-        free(cmd->argv);
-        free(cmd->redirect_to);
-        free(cmd);
-    }
     // printf("exec complete: %lld\n", heaph_get_alloc_count());
     return result;
 }
@@ -528,19 +534,17 @@ pipeline_result execute_pipeline_list(pipeline_list *pl) {
     if (pl->count == 0) {
         return result;
     }
-    if (pl->pipelines[pl->count - 1]->in_background) {
-        /// run in background
-        return result;
-    }
-    result = execute_pipeline(pl, 0);
-    for(ll i = 1; i < pl->count; i++) {
-        pipeline pipeline = *pl->pipelines[i];
-        if (pipeline.wait_prev == 2 && result.exit_code != 0) {
-            /// wait and, but received nonzero
+    // if (pl->pipelines[pl->count - 1]->in_background) {
+    //     /// run in background
+    //     return result;
+    // }
+    for(ll i = 0; i < pl->count; i++) {
+        if (pl->pipelines[i]->prev_wait == 1 && result.exit_code != 0) {
+            /// wait zero, but received nonzero
             continue;
         }
-        if (pipeline.wait_prev == 1 && result.exit_code == 0) {
-            /// wait and, but received zero
+        if (pl->pipelines[i]->prev_wait == 2 && result.exit_code == 0) {
+            /// wait nonzero, but received zero
             continue;
         }
         result = execute_pipeline(pl, i);

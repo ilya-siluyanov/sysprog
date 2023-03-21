@@ -4,24 +4,32 @@
 
 
 int iteration() {
-    read_raw_result *raw = read_raw();
-    if (raw->value == NULL) {
-        int to_return = 0;
-        if (raw->exit_code == 1)
-            to_return = 1;
-        free(raw);
-        return to_return;
+    read_raw_result raw = read_raw();
+    if (raw.value == NULL) {
+        free(raw.value);
+        return raw.exit_code;
     }
-    pipeline_list pl = parse_pipeline_list(raw -> value);
-    pipeline_result result = execute_pipeline_list(&pl);
+    pipeline_list pl = parse_pipeline_list(raw.value);
+    free(raw.value);
+    pipeline_list *pl_p = calloc(1, sizeof(pipeline_list));
+    memcpy(pl_p, &pl, sizeof(pipeline_list));
+    pipeline_result result = {.should_exit = 0, .exit_code = 0};
+    if (pl_p->in_background) {
+        if (fork() == 0) {
+            dup2(open("/dev/null", O_RDONLY), STDIN_FILENO);
+            execute_pipeline_list(pl_p);
+            result.should_exit = 1;
+        }
+    } else {
+        result = execute_pipeline_list(pl_p);
+    }
+    cleanup_pipeline_list(pl_p);
 
-    free(raw->value);
-    free(raw);
+    // printf("Leaks: %llu\n", heaph_get_alloc_count());
 
     if (!result.should_exit) {
         return -1;
     }
-    // printf("Leaks: %llu\n", heaph_get_alloc_count());
     return result.exit_code;
 }
 
