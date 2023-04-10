@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <printf.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/errno.h>
 
 enum {
     WAITING = 0b001,
@@ -92,8 +94,21 @@ thread_pool_delete(struct thread_pool *pool)
     }
 
     pool->deleted = true;
+    pthread_mutex_unlock(&pool->access_lock);
+    while (true){
+        usleep(100);
+        pthread_mutex_lock(&pool->access_lock);
+        if (pool->thread_count == 0) {
+            pthread_mutex_unlock(&pool->access_lock);
+            break;
+        }
+        pthread_mutex_unlock(&pool->access_lock);
+    }
 
     pthread_mutex_unlock(&pool->access_lock);
+    free(pool->threads);
+    free(pool->task_pool);
+    free(pool);
     return 0;
 }
 
@@ -101,6 +116,7 @@ int worker_iteration(struct thread_pool *parent_pool) {
     // wait on a task to appear
     pthread_mutex_lock(&parent_pool->access_lock);
     if (parent_pool->deleted) {
+        parent_pool->thread_count--;
         pthread_mutex_unlock(&parent_pool->access_lock);
         return -1;
     }
@@ -222,12 +238,47 @@ thread_task_is_running(const struct thread_task *task)
     return false;
 }
 
+unsigned long long timespec_to_ns(struct timespec ts) {
+    return (unsigned long long) ts.tv_sec * (long) 10e9 + ts.tv_nsec;
+}
+
+struct timespec ts_add(struct timespec ts, double v) {
+    long sec_to_add = (long) v;
+    long ns_to_add = (v - sec_to_add) * 10e9;
+
+    unsigned long long total_ns = ts.tv_nsec + ns_to_add;
+    sec_to_add += total_ns / (long) 10e9;
+    total_ns %= (long) 10e9;
+
+    struct timespec result = {
+            .tv_sec = ts.tv_sec + sec_to_add,
+            .tv_nsec = (long) total_ns
+    };
+    return result;
+}
+
+bool timer_expired(struct timespec expired_at, struct timespec now) {
+    return timespec_to_ns(expired_at) < timespec_to_ns(now);
+}
+
+struct timespec ts_now() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts;
+}
+
 int
-thread_task_join(struct thread_task *task, void **result)
+thread_task_join(struct thread_task *task, double timeout, void **result)
 {
-    /* IMPLEMENT THIS FUNCTION */
+    struct timespec expired_at = ts_add(ts_now(), timeout);
     while (true) {
-        pthread_mutex_lock(&task->access_lock);
+        if (timer_expired(expired_at, ts_now())) {
+            return TPOOL_ERR_TIMEOUT;
+        }
+        if (pthread_mutex_trylock(&task->access_lock) == EBUSY) {
+            usleep(100);
+            continue;
+        }
         if (!task->state) {
             pthread_mutex_unlock(&task->access_lock);
             return TPOOL_ERR_TASK_NOT_PUSHED;

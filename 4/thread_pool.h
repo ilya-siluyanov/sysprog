@@ -22,11 +22,12 @@ struct thread_task;
 typedef void *(*thread_task_f)(void *);
 
 enum {
-	TPOOL_MAX_THREADS = 20,
-	TPOOL_MAX_TASKS = 100000,
+    TPOOL_MAX_THREADS = 20,
+    TPOOL_MAX_TASKS = 100000,
 };
 
 enum thread_poool_errcode {
+<<<<<<< HEAD
 	TPOOL_ERR_INVALID_ARGUMENT = 1,
 	TPOOL_ERR_TOO_MANY_TASKS,
 	TPOOL_ERR_HAS_TASKS,
@@ -34,6 +35,15 @@ enum thread_poool_errcode {
 	TPOOL_ERR_TASK_IN_POOL,
 	TPOOL_ERR_NOT_IMPLEMENTED,
 	TPOOL_ERR_TIMEOUT,
+=======
+    TPOOL_ERR_INVALID_ARGUMENT = 1,
+    TPOOL_ERR_TOO_MANY_TASKS,
+    TPOOL_ERR_HAS_TASKS,
+    TPOOL_ERR_TASK_NOT_PUSHED,
+    TPOOL_ERR_TASK_IN_POOL,
+    TPOOL_ERR_NOT_IMPLEMENTED,
+    TPOOL_ERR_TIMEOUT,
+>>>>>>> b3d38be (Implement timeout)
 };
 
 /** Thread pool API. */
@@ -116,6 +126,7 @@ thread_task_is_running(const struct thread_task *task);
  * Note, this function does not delete task object. It can be
  * reused for a next task or deleted via thread_task_delete.
  * @param task Task to join.
+ * @param timeout seconds to wait until the task finishes
  * @param[out] result Pointer to stored result of @a task.
  *
  * @retval 0 Success.
@@ -123,7 +134,7 @@ thread_task_is_running(const struct thread_task *task);
  *     - TPOOL_ERR_TASK_NOT_PUSHED - task is not pushed to a pool.
  */
 int
-thread_task_join(struct thread_task *task, void **result);
+thread_task_join(struct thread_task *task, double timeout, void **result);
 
 #ifdef NEED_TIMED_JOIN
 

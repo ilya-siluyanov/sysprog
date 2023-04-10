@@ -3,33 +3,35 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <time.h>
+#include <unistd.h>
 
 static void
 test_new(void)
 {
-	unit_test_start();
+    unit_test_start();
 
-	struct thread_pool *p;
-	unit_check(thread_pool_new(TPOOL_MAX_THREADS + 1, &p) ==
-		   TPOOL_ERR_INVALID_ARGUMENT, "too big thread count is "\
+    struct thread_pool *p;
+    unit_check(thread_pool_new(TPOOL_MAX_THREADS + 1, &p) ==
+               TPOOL_ERR_INVALID_ARGUMENT, "too big thread count is "\
 		   "forbidden");
-	unit_check(thread_pool_new(0, &p) == TPOOL_ERR_INVALID_ARGUMENT,
-		   "0 thread count is forbidden");
-	unit_check(thread_pool_new(-1, &p) == TPOOL_ERR_INVALID_ARGUMENT,
-		   "negative thread count is forbidden");
+    unit_check(thread_pool_new(0, &p) == TPOOL_ERR_INVALID_ARGUMENT,
+               "0 thread count is forbidden");
+    unit_check(thread_pool_new(-1, &p) == TPOOL_ERR_INVALID_ARGUMENT,
+               "negative thread count is forbidden");
 
-	unit_check(thread_pool_new(1, &p) == 0, "1 max thread is allowed");
-	unit_check(thread_pool_thread_count(p) == 0,
-		   "0 active threads after creation");
-	unit_check(thread_pool_delete(p) == 0, "delete without tasks");
+    unit_check(thread_pool_new(1, &p) == 0, "1 max thread is allowed");
+    unit_check(thread_pool_thread_count(p) == 0,
+               "0 active threads after creation");
+    unit_check(thread_pool_delete(p) == 0, "delete without tasks");
 
-	unit_check(thread_pool_new(TPOOL_MAX_THREADS, &p) == 0,
-		   "max thread count is allowed");
-	unit_check(thread_pool_thread_count(p) == 0,
-		   "0 active threads after creation");
-	unit_check(thread_pool_delete(p) == 0, "delete");
+    unit_check(thread_pool_new(TPOOL_MAX_THREADS, &p) == 0,
+               "max thread count is allowed");
+    unit_check(thread_pool_thread_count(p) == 0,
+               "0 active threads after creation");
+    unit_check(thread_pool_delete(p) == 0, "delete");
 
-	unit_test_finish();
+    unit_test_finish();
 }
 
 static void *
@@ -50,7 +52,7 @@ task_wait_for_f(void *arg)
 static void
 test_push(void)
 {
-	unit_test_start();
+    unit_test_start();
 
 	struct thread_pool *p;
 	struct thread_task *t;
@@ -116,22 +118,22 @@ test_push(void)
 	free(tasks);
 	unit_fail_if(thread_pool_delete(p) != 0);
 
-	unit_test_finish();
+    unit_test_finish();
 }
 
 static void *
 task_lock_unlock_f(void *arg)
 {
-	pthread_mutex_t *m = (pthread_mutex_t *) arg;
-	pthread_mutex_lock(m);
-	pthread_mutex_unlock(m);
-	return arg;
+    pthread_mutex_t *m = (pthread_mutex_t *) arg;
+    pthread_mutex_lock(m);
+    pthread_mutex_unlock(m);
+    return arg;
 }
 
 static void
 test_thread_pool_delete(void)
 {
-	unit_test_start();
+    unit_test_start();
 
 	void *result;
 	struct thread_pool *p;
@@ -150,14 +152,43 @@ test_thread_pool_delete(void)
 	usleep(1000);
 	unit_check(thread_pool_delete(p) == TPOOL_ERR_HAS_TASKS, "delete does "\
 		   "not work until there are not finished tasks");
-	pthread_mutex_unlock(&m);
-	unit_fail_if(thread_task_join(t, &result) != 0);
-	unit_fail_if(thread_task_delete(t) != 0);
+    pthread_mutex_unlock(&m);
+    unit_fail_if(thread_task_join(t, 100, &result) != 0);
+    unit_fail_if(thread_task_delete(t) != 0);
 
-	unit_check(thread_pool_delete(p) == 0, "now delete works");
-	pthread_mutex_destroy(&m);
+    unit_check(thread_pool_delete(p) == 0, "now delete works");
+    pthread_mutex_destroy(&m);
 
-	unit_test_finish();
+    unit_test_finish();
+}
+
+void *my_sleep(void *arg) {
+    unsigned int sec = *(double *)arg;
+    printf("Sleep for %d\n", sec);
+    sleep(sec);
+    return NULL;
+}
+
+void test_timeout() {
+    unit_test_start();
+
+    void *result;
+    struct thread_pool *p;
+    struct thread_task *t;
+    pthread_mutex_t m;
+    double sleep_sec = 2;
+    unit_fail_if(thread_pool_new(3, &p) != 0);
+    unit_fail_if(thread_task_new(&t, &my_sleep, &sleep_sec) != 0);
+    unit_fail_if(thread_pool_push_task(p, t) != 0);
+    unit_check(thread_task_join(t, sleep_sec / 4, &result) == TPOOL_ERR_TIMEOUT, "timeout should occur after 1/4 of time");
+    unit_check(thread_task_join(t, sleep_sec / 8, &result) == TPOOL_ERR_TIMEOUT, "timeout should occur after 3/8 of time");
+    unit_check(thread_task_join(t, sleep_sec, &result) == 0, "result should be returned");
+    unit_fail_if(thread_task_delete(t) != 0);
+
+    unit_check(thread_pool_delete(p) == 0, "now delete works");
+    pthread_mutex_destroy(&m);
+
+    unit_test_finish();
 }
 
 static void
@@ -350,7 +381,7 @@ test_detach_long(void)
 int
 main(void)
 {
-	unit_test_start();
+    unit_test_start();
 
 	test_new();
 	test_push();
@@ -360,6 +391,6 @@ main(void)
 	test_detach_stress();
 	test_detach_long();
 
-	unit_test_finish();
-	return 0;
+    unit_test_finish();
+    return 0;
 }
