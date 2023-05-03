@@ -184,8 +184,8 @@ coro_body(int signum)
 struct coro *
 coro_new(coro_f func, void *func_arg)
 {
-	struct coro *c = (struct coro *) malloc(sizeof(*c));
-    struct coro_stats *stats = (struct coro_stats *) malloc(sizeof(*stats));
+	struct coro *c = (struct coro *) calloc(1, sizeof(*c));
+    struct coro_stats *stats = (struct coro_stats *) calloc(1, sizeof(*stats));
 	int stack_size = 1024 * 1024;
 	if (stack_size < SIGSTKSZ)
 		stack_size = SIGSTKSZ;

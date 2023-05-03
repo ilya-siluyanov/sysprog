@@ -16,7 +16,7 @@ typedef struct stack {
 
 
 stack *s_new() {
-    stack *s = (stack *) malloc(sizeof(stack));
+    stack *s = (stack *) calloc(1, sizeof(stack));
     return s;
 }
 

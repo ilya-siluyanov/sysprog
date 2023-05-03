@@ -43,7 +43,7 @@ ll numbers_count(char *filename) {
 // in a buffer
 numbers_array *read_array(char *filename) {
     ll count = numbers_count(filename);
-    numbers_array *arr = (numbers_array *) malloc(sizeof(numbers_array));
+    numbers_array *arr = (numbers_array *) calloc(1, sizeof(numbers_array));
     arr->numbers = calloc(count, sizeof(ll));
 
     FILE *f = fopen(filename, "r");
@@ -65,7 +65,7 @@ numbers_array *read_array(char *filename) {
 
 
 numbers_array *sort(numbers_array *arr1, numbers_array *arr2) {
-    numbers_array *result = (numbers_array *) malloc(sizeof(numbers_array));
+    numbers_array *result = (numbers_array *) calloc(1, sizeof(numbers_array));
     result->numbers = calloc(arr1->len + arr2->len, sizeof(ll));
     result->len = (arr1->len + arr2->len);
 
@@ -139,7 +139,7 @@ ll sort_iteration(ll *numbers, ll l, ll r, ll n) {
 
 void sort_array(ll *numbers, ll n, ld time_quantum) {
     stack *s = s_new();
-    pair *p = (pair *) malloc(sizeof(pair));
+    pair *p = (pair *) calloc(1, sizeof(pair));
     p->l = 0;
     p->r = n;
     s_push(s, p);
@@ -246,26 +246,26 @@ main(int argc, char **argv) {
     ll files_count = argc - offset;
     printf("Files count: %lld\n", files_count);
 
-    file_to_sort **files = (file_to_sort **) malloc(sizeof(file_to_sort *) * files_count);
+    file_to_sort **files = (file_to_sort **) calloc(files_count, sizeof(file_to_sort *));
 
     for (int i = 0; i < files_count; i++) {
-        file_to_sort *item = (file_to_sort *) malloc(sizeof(file_to_sort));
+        file_to_sort *item = (file_to_sort *) calloc(1, sizeof(file_to_sort));
         item->name = strdup(argv[offset + i]);
         item->acquired = 0;
         files[i] = item;
     }
 
     // FIXME: If a file X will appear twice, there should be another logic for memory allocation
-    numbers_array **all_arrays = (numbers_array **) malloc(sizeof(numbers_array *) * files_count);
+    numbers_array **all_arrays = (numbers_array **) calloc(files_count, sizeof(numbers_array *));
     ll arrays_len = 0;
 
     coro_sched_init();
     for (int i = 0; i < N; ++i) {
         //cleaned up in coro func
-        coro_args *args = (coro_args *) malloc(sizeof(coro_args));
+        coro_args *args = (coro_args *) calloc(1, sizeof(coro_args));
         args->files = files;
         args->quantum = T / N;
-        args->name = malloc(sizeof(char) * 10 * N);
+        args->name = calloc(10 * N, sizeof(char));
         args->arrays = all_arrays;
         args->files_len = files_count;
         args->arrays_len = &arrays_len;
@@ -285,9 +285,9 @@ main(int argc, char **argv) {
     }
     free(files);
 
-    numbers_array *result = malloc(sizeof(numbers_array));
+    numbers_array *result = calloc(1, sizeof(numbers_array));
     ull first_array_to_alloc = sizeof(ll) * all_arrays[0]->len;
-    result->numbers = (ll *) malloc(first_array_to_alloc);
+    result->numbers = (ll *) calloc(1, first_array_to_alloc);
     memcpy(result->numbers, all_arrays[0]->numbers, first_array_to_alloc);
     result->len = all_arrays[0]->len;
 
