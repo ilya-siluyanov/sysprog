@@ -23,10 +23,7 @@ stack *s_new() {
 
 void s_resize(stack *s) {
     ll cap = s->cap * 2 + 1;
-    pair **new_arr = (pair **) malloc(sizeof(pair *) * cap);
-    memcpy(new_arr, s->arr, sizeof(pair) * s->len);
-    free(s->arr);
-    s->arr = new_arr;
+    s->arr = realloc(s->arr, sizeof(pair *) * cap);
     s->cap = cap;
 }
 
