@@ -27,7 +27,6 @@ enum {
 };
 
 enum thread_poool_errcode {
-<<<<<<< HEAD
 	TPOOL_ERR_INVALID_ARGUMENT = 1,
 	TPOOL_ERR_TOO_MANY_TASKS,
 	TPOOL_ERR_HAS_TASKS,
@@ -35,15 +34,6 @@ enum thread_poool_errcode {
 	TPOOL_ERR_TASK_IN_POOL,
 	TPOOL_ERR_NOT_IMPLEMENTED,
 	TPOOL_ERR_TIMEOUT,
-=======
-    TPOOL_ERR_INVALID_ARGUMENT = 1,
-    TPOOL_ERR_TOO_MANY_TASKS,
-    TPOOL_ERR_HAS_TASKS,
-    TPOOL_ERR_TASK_NOT_PUSHED,
-    TPOOL_ERR_TASK_IN_POOL,
-    TPOOL_ERR_NOT_IMPLEMENTED,
-    TPOOL_ERR_TIMEOUT,
->>>>>>> b3d38be (Implement timeout)
 };
 
 /** Thread pool API. */
