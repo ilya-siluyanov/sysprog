@@ -1,3 +1,5 @@
+.PHONY: all test.o thread_pool.o
+
 all: test.o thread_pool.o
 	gcc test.o thread_pool.o ../utils/heap_help/heap_help.c
 

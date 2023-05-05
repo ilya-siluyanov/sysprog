@@ -124,7 +124,7 @@ thread_task_is_running(const struct thread_task *task);
  *     - TPOOL_ERR_TASK_NOT_PUSHED - task is not pushed to a pool.
  */
 int
-thread_task_join(struct thread_task *task, double timeout, void **result);
+thread_task_join(struct thread_task *task, void **result);
 
 #ifdef NEED_TIMED_JOIN
 

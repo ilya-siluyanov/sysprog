@@ -15,8 +15,8 @@ struct thread_task {
     thread_task_f function;
     void *arg;
 
-    /* PUT HERE OTHER MEMBERS */
     pthread_mutex_t access_lock;
+    pthread_cond_t join_cond;
     int state;
     void *result;
     struct thread_task *prev;
@@ -155,6 +155,7 @@ int worker_iteration(struct thread_pool *parent_pool) {
     pthread_mutex_lock(&parent_pool->access_lock);
     parent_pool->task_pool->task_count--;
     pthread_mutex_unlock(&parent_pool->access_lock);
+    pthread_cond_signal(&task_to_run->join_cond);
     pthread_mutex_unlock(&task_to_run->access_lock);
     return 0;
 }
@@ -215,6 +216,7 @@ thread_task_new(struct thread_task **task, thread_task_f function, void *arg)
 
     struct thread_task *_task = calloc(1, sizeof(struct thread_task));
     pthread_mutex_init(&_task->access_lock, NULL);
+    pthread_cond_init(&_task->join_cond, NULL);
     _task->function = function;
     _task->arg = arg;
     *task = _task;
@@ -235,7 +237,10 @@ bool
 thread_task_is_running(const struct thread_task *task)
 {
     /* IMPLEMENT THIS FUNCTION */
-    return false;
+    pthread_mutex_lock((pthread_mutex_t *)&task->access_lock);
+    bool result = task->state & TAKEN && !(task->state & FINISHED);
+    pthread_mutex_unlock((pthread_mutex_t *)&task->access_lock);
+    return result;
 }
 
 unsigned long long timespec_to_ns(struct timespec ts) {
@@ -266,32 +271,25 @@ struct timespec ts_now() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts;
 }
-
 int
-thread_task_join(struct thread_task *task, double timeout, void **result)
+thread_task_join(struct thread_task *task, void **result)
 {
-    struct timespec expired_at = ts_add(ts_now(), timeout);
-    while (true) {
-        if (timer_expired(expired_at, ts_now())) {
-            return TPOOL_ERR_TIMEOUT;
-        }
-        if (pthread_mutex_trylock(&task->access_lock) == EBUSY) {
-            usleep(100);
-            continue;
-        }
-        if (!task->state) {
-            pthread_mutex_unlock(&task->access_lock);
-            return TPOOL_ERR_TASK_NOT_PUSHED;
-        }
-        if (!(task->state & FINISHED)) {
-            pthread_mutex_unlock(&task->access_lock);
-            usleep(100);
-            continue;
-        }
-        break;
+    pthread_mutex_lock(&task->access_lock);
+    if (!task->state) {
+        pthread_mutex_unlock(&task->access_lock);
+        return TPOOL_ERR_TASK_NOT_PUSHED;
     }
+    printf("before join lock\n");
+    while (!(task->state & FINISHED)) {
+        printf("before cond wait\n");
+        pthread_cond_wait(&task->join_cond, &task->access_lock);
+        printf("after cond wait\n");
+    }
+    printf("task finished\n");
+    printf("after loop\n");
     *result = task->result;
     pthread_mutex_unlock(&task->access_lock);
+    printf("after unlock\n");
     return 0;
 }
 
