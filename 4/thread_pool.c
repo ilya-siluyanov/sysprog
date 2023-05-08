@@ -5,10 +5,11 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/errno.h>
+#include <string.h>
 
 enum {
-    WAITING = 0b001,
-    TAKEN = 0b010,
+    WAITING  = 0b001,
+    TAKEN    = 0b010,
     FINISHED = 0b100,
 };
 struct thread_task {
@@ -152,11 +153,14 @@ int worker_iteration(struct thread_pool *parent_pool) {
     }
     if (task_to_run->next != NULL)
         task_to_run->next->prev = task_to_run->prev;
+
+    pthread_cond_broadcast(&task_to_run->join_cond);
+    pthread_mutex_unlock(&task_to_run->access_lock);
+
     pthread_mutex_lock(&parent_pool->access_lock);
     parent_pool->task_pool->task_count--;
     pthread_mutex_unlock(&parent_pool->access_lock);
-    pthread_cond_signal(&task_to_run->join_cond);
-    pthread_mutex_unlock(&task_to_run->access_lock);
+
     return 0;
 }
 
@@ -279,17 +283,14 @@ thread_task_join(struct thread_task *task, void **result)
         pthread_mutex_unlock(&task->access_lock);
         return TPOOL_ERR_TASK_NOT_PUSHED;
     }
-    printf("before join lock\n");
-    while (!(task->state & FINISHED)) {
-        printf("before cond wait\n");
-        pthread_cond_wait(&task->join_cond, &task->access_lock);
-        printf("after cond wait\n");
+    while ((task->state & FINISHED) == 0) {
+        int rc = pthread_cond_wait(&task->join_cond, &task->access_lock);
+        if (rc) {
+            printf("Problem after 'wait' call: %s\n", strerror(rc));
+        }
     }
-    printf("task finished\n");
-    printf("after loop\n");
     *result = task->result;
     pthread_mutex_unlock(&task->access_lock);
-    printf("after unlock\n");
     return 0;
 }
 
@@ -310,6 +311,8 @@ thread_task_delete(struct thread_task *task)
     /* IMPLEMENT THIS FUNCTION */
     pthread_mutex_lock(&task->access_lock);
     if (task->state & FINISHED || !task->state) {
+        pthread_mutex_destroy(&task->access_lock);
+        pthread_cond_destroy(&task->join_cond);
         free(task);
         return 0;
     }
