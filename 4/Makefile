@@ -1,7 +1,7 @@
 .PHONY: all test.o thread_pool.o
 
 all: test.o thread_pool.o
-	gcc -g test.o thread_pool.o ../utils/heap_help/heap_help.c
+	gcc -Wall -g test.o thread_pool.o ../utils/heap_help/heap_help.c
 
 test.o: test.c
 	gcc -Wall -g -c test.c -o test.o -I ../utils
