@@ -272,7 +272,7 @@ bool timer_expired(struct timespec expired_at, struct timespec now) {
 
 struct timespec ts_now() {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(CLOCK_REALTIME, &ts);
     return ts;
 }
 int
@@ -296,8 +296,26 @@ thread_task_join(struct thread_task *task, void **result)
 int
 thread_task_timed_join(struct thread_task *task, double timeout, void **result)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+    /* IMPLEMENT THIS FUNCTION */
+    pthread_mutex_lock(&task->access_lock);
+    if (!task->state) {
+        pthread_mutex_unlock(&task->access_lock);
+        return TPOOL_ERR_TASK_NOT_PUSHED;
+    }
+    struct timespec start = ts_now();
+    struct timespec expired_at = ts_add(start, timeout);
+    while (task->state != FINISHED) {
+        int rc = pthread_cond_timedwait(&task->join_cond, &task->access_lock, &expired_at);
+        bool timedout = rc == ETIMEDOUT;
+        bool expired = rc == EINVAL && timer_expired(expired_at, ts_now());
+        if (timedout || expired) {
+            pthread_mutex_unlock(&task->access_lock);
+            return TPOOL_ERR_TIMEOUT;
+        }
+    }
+    *result = task->result;
+    pthread_mutex_unlock(&task->access_lock);
+    return 0;
 }
 
 #endif
