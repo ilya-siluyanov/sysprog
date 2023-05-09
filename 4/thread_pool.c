@@ -248,16 +248,16 @@ thread_task_is_running(const struct thread_task *task)
 }
 
 unsigned long long timespec_to_ns(struct timespec ts) {
-    return (unsigned long long) ts.tv_sec * (long) 10e9 + ts.tv_nsec;
+    return (unsigned long long) ts.tv_sec * (long) 1e9 + ts.tv_nsec;
 }
 
 struct timespec ts_add(struct timespec ts, double v) {
     long sec_to_add = (long) v;
-    long ns_to_add = (v - sec_to_add) * 10e9;
+    long ns_to_add = (v - sec_to_add) * 1e9;
 
     unsigned long long total_ns = ts.tv_nsec + ns_to_add;
-    sec_to_add += total_ns / (long) 10e9;
-    total_ns %= (long) 10e9;
+    sec_to_add += total_ns / (long) 1e9;
+    total_ns %= (long) 1e9;
 
     struct timespec result = {
             .tv_sec = ts.tv_sec + sec_to_add,
