@@ -22,8 +22,8 @@ struct thread_task;
 typedef void *(*thread_task_f)(void *);
 
 enum {
-	TPOOL_MAX_THREADS = 20,
-	TPOOL_MAX_TASKS = 100000,
+    TPOOL_MAX_THREADS = 20,
+    TPOOL_MAX_TASKS = 100000,
 };
 
 enum thread_poool_errcode {
@@ -116,6 +116,7 @@ thread_task_is_running(const struct thread_task *task);
  * Note, this function does not delete task object. It can be
  * reused for a next task or deleted via thread_task_delete.
  * @param task Task to join.
+ * @param timeout seconds to wait until the task finishes
  * @param[out] result Pointer to stored result of @a task.
  *
  * @retval 0 Success.
